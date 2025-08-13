@@ -174,9 +174,55 @@ def cmd_hook_install(args: List[str]):
     sys.exit(rc)
 
 
+def _cfg_path() -> str:
+    return os.path.expanduser("~/.config/console-hax/mcp2-toolbox.yml")
+
+
+def _cfg_load() -> Dict[str, str]:
+    p = _cfg_path()
+    if not os.path.exists(p) or not yaml:
+        return {}
+    with open(p, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def _cfg_save(cfg: Dict[str, str]) -> None:
+    p = _cfg_path()
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    if yaml:
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(yaml.safe_dump(cfg, sort_keys=True))
+
+
+def cmd_config(args: List[str]):
+    cfg = _cfg_load()
+    defaults = {
+        "project": cfg.get("project", os.path.join(CH_BASE, "hairglasses_ps2_visualizer_classic")),
+        "elf": cfg.get("elf", os.path.join(CH_BASE, "hairglasses_ps2_visualizer_classic", "bin", "hg_ps2_visualizer.elf")),
+        "build": cfg.get("build", "./tools/build_ee.sh --docker --fast"),
+        "pcsx2_exe": cfg.get("pcsx2_exe", ""),
+    }
+    if gum_available():
+        def _gum_input(prompt: str, initial: str) -> str:
+            cmd = f"gum input --placeholder {shlex.quote(prompt)} --value {shlex.quote(initial)}"
+            return os.popen(cmd).read().strip() or initial
+        project = _gum_input("TARGET_PROJECT", defaults["project"])
+        elf = _gum_input("TARGET_ELF", defaults["elf"])
+        build = _gum_input("BUILD_CMD", defaults["build"])
+        pcsx2_exe = _gum_input("WIN_PCSX2_EXE (optional)", defaults["pcsx2_exe"])
+    else:
+        project = input(f"TARGET_PROJECT [{defaults['project']}]: ").strip() or defaults["project"]
+        elf = input(f"TARGET_ELF [{defaults['elf']}]: ").strip() or defaults["elf"]
+        build = input(f"BUILD_CMD [{defaults['build']}]: ").strip() or defaults["build"]
+        pcsx2_exe = input(f"WIN_PCSX2_EXE (optional) [{defaults['pcsx2_exe']}]: ").strip() or defaults["pcsx2_exe"]
+    new_cfg = {"project": project, "elf": elf, "build": build, "pcsx2_exe": pcsx2_exe}
+    _cfg_save(new_cfg)
+    print(f"wrote {_cfg_path()}")
+
+
 def main():
     if len(sys.argv) < 2:
-        print("usage: mcp2-toolbox <list|ui|new|watch|run|hook-install> [args]")
+        print("usage: mcp2-toolbox <list|ui|new|watch|run|hook-install|config> [args]")
         sys.exit(1)
     cmd = sys.argv[1]
     if cmd == "list":
@@ -196,6 +242,9 @@ def main():
         return
     if cmd == "hook-install":
         cmd_hook_install(sys.argv[2:])
+        return
+    if cmd == "config":
+        cmd_config(sys.argv[2:])
         return
     print("unknown command")
 
