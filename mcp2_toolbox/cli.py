@@ -65,19 +65,16 @@ def cmd_list():
 
 
 def gum_available() -> bool:
-    return os.system("which gum >/dev/null 2>&1") == 0
+    return False
 
 
 def cmd_ui():
     devs = discover()
     opts = [f"{d.name} ({d.ip})" for d in devs] or ["Manual IP"]
-    if gum_available():
-        choice = os.popen(f"echo '{os.linesep.join(opts)}' | gum choose").read().strip()
-    else:
-        print("Select device:")
-        for i, o in enumerate(opts):
-            print(f"  {i+1}. {o}")
-        choice = opts[int(input("> ")) - 1]
+    print("Select device:")
+    for i, o in enumerate(opts):
+        print(f"  {i+1}. {o}")
+    choice = opts[int(input("> ")) - 1]
     if choice == "Manual IP":
         target = input("Enter IP: ").strip()
     else:
@@ -202,19 +199,10 @@ def cmd_config(args: List[str]):
         "build": cfg.get("build", "./tools/build_ee.sh --docker --fast"),
         "pcsx2_exe": cfg.get("pcsx2_exe", ""),
     }
-    if gum_available():
-        def _gum_input(prompt: str, initial: str) -> str:
-            cmd = f"gum input --placeholder {shlex.quote(prompt)} --value {shlex.quote(initial)}"
-            return os.popen(cmd).read().strip() or initial
-        project = _gum_input("TARGET_PROJECT", defaults["project"])
-        elf = _gum_input("TARGET_ELF", defaults["elf"])
-        build = _gum_input("BUILD_CMD", defaults["build"])
-        pcsx2_exe = _gum_input("WIN_PCSX2_EXE (optional)", defaults["pcsx2_exe"])
-    else:
-        project = input(f"TARGET_PROJECT [{defaults['project']}]: ").strip() or defaults["project"]
-        elf = input(f"TARGET_ELF [{defaults['elf']}]: ").strip() or defaults["elf"]
-        build = input(f"BUILD_CMD [{defaults['build']}]: ").strip() or defaults["build"]
-        pcsx2_exe = input(f"WIN_PCSX2_EXE (optional) [{defaults['pcsx2_exe']}]: ").strip() or defaults["pcsx2_exe"]
+    project = input(f"TARGET_PROJECT [{defaults['project']}]: ").strip() or defaults["project"]
+    elf = input(f"TARGET_ELF [{defaults['elf']}]: ").strip() or defaults["elf"]
+    build = input(f"BUILD_CMD [{defaults['build']}]: ").strip() or defaults["build"]
+    pcsx2_exe = input(f"WIN_PCSX2_EXE (optional) [{defaults['pcsx2_exe']}]: ").strip() or defaults["pcsx2_exe"]
     new_cfg = {"project": project, "elf": elf, "build": build, "pcsx2_exe": pcsx2_exe}
     _cfg_save(new_cfg)
     print(f"wrote {_cfg_path()}")
