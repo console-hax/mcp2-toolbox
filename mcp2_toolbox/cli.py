@@ -4,18 +4,29 @@ import json
 import time
 import shlex
 import subprocess
+import logging
+import argparse
 from dataclasses import dataclass
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
+from pathlib import Path
 
 try:
     import yaml
-except Exception:
+except ImportError:
     yaml = None
 
 try:
     from zeroconf import ServiceBrowser, Zeroconf
-except Exception:
+except ImportError:
     Zeroconf = None
+
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -24,36 +35,83 @@ class Device:
     ip: str
 
 
-def load_config():
-    path = os.path.expanduser("~/.config/console-hax/mcp2-toolbox.yml")
-    if not os.path.exists(path):
+class MCP2ToolboxError(Exception):
+    """Base exception for MCP2 Toolbox errors."""
+    pass
+
+
+class ConfigurationError(MCP2ToolboxError):
+    """Configuration-related errors."""
+    pass
+
+
+class DeviceError(MCP2ToolboxError):
+    """Device-related errors."""
+    pass
+
+
+def load_config() -> Dict[str, Any]:
+    """Load configuration from YAML file with proper error handling."""
+    config_path = os.path.expanduser("~/.config/console-hax/mcp2-toolbox.yml")
+    
+    if not os.path.exists(config_path):
+        logger.debug(f"Config file not found: {config_path}")
         return {}
+    
     if not yaml:
+        logger.warning("PyYAML not available, cannot load config")
         return {}
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+    
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+            logger.debug(f"Loaded config from {config_path}")
+            return config
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing config file {config_path}: {e}")
+        raise ConfigurationError(f"Invalid YAML in config file: {e}")
+    except Exception as e:
+        logger.error(f"Error loading config file {config_path}: {e}")
+        raise ConfigurationError(f"Failed to load config: {e}")
 
 
 def discover(timeout_sec: float = 2.0) -> List[Device]:
+    """Discover MCP2 devices using mDNS/Zeroconf."""
     devices: List[Device] = []
+    
     if not Zeroconf:
+        logger.warning("Zeroconf not available, cannot discover devices")
         return devices
-    zc = Zeroconf()
-    found = {}
+    
+    try:
+        zc = Zeroconf()
+        found = {}
 
-    class Listener:
-        def add_service(self, zc, t, name):
-            info = zc.get_service_info(t, name)
-            if info and info.addresses:
-                ip = ".".join(map(str, info.addresses[0]))
-                found[name] = ip
+        class Listener:
+            def add_service(self, zc, t, name):
+                try:
+                    info = zc.get_service_info(t, name)
+                    if info and info.addresses:
+                        ip = ".".join(map(str, info.addresses[0]))
+                        found[name] = ip
+                        logger.debug(f"Discovered device: {name} at {ip}")
+                except Exception as e:
+                    logger.warning(f"Error processing service {name}: {e}")
 
-    ServiceBrowser(zc, ["_http._tcp.local.", "_memcardpro._tcp.local."], Listener())
-    time.sleep(timeout_sec)
-    zc.close()
-    for name, ip in found.items():
-        devices.append(Device(name=name, ip=ip))
-    return devices
+        ServiceBrowser(zc, ["_http._tcp.local.", "_memcardpro._tcp.local."], Listener())
+        logger.info(f"Discovering devices for {timeout_sec} seconds...")
+        time.sleep(timeout_sec)
+        zc.close()
+        
+        for name, ip in found.items():
+            devices.append(Device(name=name, ip=ip))
+        
+        logger.info(f"Discovered {len(devices)} device(s)")
+        return devices
+        
+    except Exception as e:
+        logger.error(f"Error during device discovery: {e}")
+        raise DeviceError(f"Device discovery failed: {e}")
 
 
 def cmd_list():
@@ -208,33 +266,144 @@ def cmd_config(args: List[str]):
     print(f"wrote {_cfg_path()}")
 
 
+def create_parser() -> argparse.ArgumentParser:
+    """Create command line argument parser."""
+    parser = argparse.ArgumentParser(
+        description="MemCard Pro 2 helper tools",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  mcp2-toolbox list                    # List discovered devices
+  mcp2-toolbox ui                      # Interactive device selection
+  mcp2-toolbox new my-project          # Create new PS2 visualizer
+  mcp2-toolbox watch --project ./my-project  # Watch and build project
+  mcp2-toolbox run --elf ./bin/app.elf # Run project in PCSX2
+  mcp2-toolbox config                  # Configure defaults
+        """
+    )
+    
+    parser.add_argument(
+        '--version', 
+        action='version', 
+        version='mcp2-toolbox 0.1.0'
+    )
+    
+    parser.add_argument(
+        '--verbose', '-v',
+        action='store_true',
+        help='Enable verbose logging'
+    )
+    
+    parser.add_argument(
+        '--base-path',
+        type=str,
+        default=os.environ.get('CONSOLE_HAX_BASE', '/home/hairglasses/Docs/console-hax'),
+        help='Base path for console-hax projects (default: %(default)s)'
+    )
+    
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    
+    # List command
+    subparsers.add_parser('list', help='List discovered MCP2 devices')
+    
+    # UI command
+    subparsers.add_parser('ui', help='Interactive device selection')
+    
+    # New command
+    new_parser = subparsers.add_parser('new', help='Create new PS2 visualizer project')
+    new_parser.add_argument('name', help='Project name')
+    new_parser.add_argument('dest', nargs='?', help='Destination directory (optional)')
+    
+    # Watch command
+    watch_parser = subparsers.add_parser('watch', help='Watch and build project')
+    watch_parser.add_argument('--win', action='store_true', help='Use Windows PCSX2')
+    watch_parser.add_argument('--project', help='Project path')
+    watch_parser.add_argument('--elf', help='ELF file path')
+    watch_parser.add_argument('--build', help='Build command')
+    watch_parser.add_argument('--pcsx2-exe', help='PCSX2 executable path')
+    
+    # Run command
+    run_parser = subparsers.add_parser('run', help='Run project in PCSX2')
+    run_parser.add_argument('--win', action='store_true', help='Use Windows PCSX2')
+    run_parser.add_argument('--elf', help='ELF file path')
+    run_parser.add_argument('--pcsx2-exe', help='PCSX2 executable path')
+    
+    # Hook install command
+    hook_parser = subparsers.add_parser('hook-install', help='Install git hooks')
+    hook_parser.add_argument('repo', nargs='?', help='Repository path (optional)')
+    
+    # Config command
+    subparsers.add_parser('config', help='Configure defaults')
+    
+    return parser
+
+
 def main():
-    if len(sys.argv) < 2:
-        print("usage: mcp2-toolbox <list|ui|new|watch|run|hook-install|config> [args]")
-        sys.exit(1)
-    cmd = sys.argv[1]
-    if cmd == "list":
-        cmd_list()
-        return
-    if cmd == "ui":
-        cmd_ui()
-        return
-    if cmd == "new":
-        cmd_new(sys.argv[2:])
-        return
-    if cmd == "watch":
-        cmd_watch(sys.argv[2:])
-        return
-    if cmd == "run":
-        cmd_run(sys.argv[2:])
-        return
-    if cmd == "hook-install":
-        cmd_hook_install(sys.argv[2:])
-        return
-    if cmd == "config":
-        cmd_config(sys.argv[2:])
-        return
-    print("unknown command")
+    """Main entry point with improved error handling."""
+    try:
+        parser = create_parser()
+        args = parser.parse_args()
+        
+        # Configure logging level
+        if args.verbose:
+            logging.getLogger().setLevel(logging.DEBUG)
+        
+        # Update global base path
+        global CH_BASE
+        CH_BASE = args.base_path
+        
+        if not args.command:
+            parser.print_help()
+            return 1
+        
+        # Route to appropriate command
+        if args.command == "list":
+            cmd_list()
+        elif args.command == "ui":
+            cmd_ui()
+        elif args.command == "new":
+            cmd_new([args.name] + ([args.dest] if args.dest else []))
+        elif args.command == "watch":
+            watch_args = []
+            if args.win:
+                watch_args.append("--win")
+            if args.project:
+                watch_args.extend(["--project", args.project])
+            if args.elf:
+                watch_args.extend(["--elf", args.elf])
+            if args.build:
+                watch_args.extend(["--build", args.build])
+            if args.pcsx2_exe:
+                watch_args.extend(["--pcsx2-exe", args.pcsx2_exe])
+            cmd_watch(watch_args)
+        elif args.command == "run":
+            run_args = []
+            if args.win:
+                run_args.append("--win")
+            if args.elf:
+                run_args.extend(["--elf", args.elf])
+            if args.pcsx2_exe:
+                run_args.extend(["--pcsx2-exe", args.pcsx2_exe])
+            cmd_run(run_args)
+        elif args.command == "hook-install":
+            cmd_hook_install([args.repo] if args.repo else [])
+        elif args.command == "config":
+            cmd_config([])
+        else:
+            logger.error(f"Unknown command: {args.command}")
+            return 1
+            
+        return 0
+        
+    except KeyboardInterrupt:
+        logger.info("Operation cancelled by user")
+        return 130
+    except MCP2ToolboxError as e:
+        logger.error(f"MCP2 Toolbox error: {e}")
+        return 1
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}", exc_info=True)
+        return 1
 
 
 if __name__ == "__main__":

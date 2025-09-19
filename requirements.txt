@@ -1,7 +1,15 @@
-zeroconf==0.132.2
-requests==2.32.3
-psutil==6.0.0
-PyYAML==6.0.2
+# Core dependencies
+zeroconf>=0.132.2,<1.0.0
+requests>=2.32.3,<3.0.0
+psutil>=6.0.0,<7.0.0
+PyYAML>=6.0.2,<7.0.0
+
+# Development dependencies (optional)
+pytest>=7.0.0,<8.0.0
+pytest-cov>=4.0.0,<5.0.0
+black>=23.0.0,<24.0.0
+flake8>=6.0.0,<7.0.0
+mypy>=1.0.0,<2.0.0
 
 
 
